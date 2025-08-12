@@ -8,7 +8,37 @@ class TorrentProcessor:
     def __init__(self):
         self.episode_utils = EpisodeUtils()
 
-    def process_seadex_torrents(self, torrents, season_filter=None, episode_filter=None):
+    def is_movie_torrent(self, torrent_info, anime_format=None):
+        """Determine if a torrent is for a movie based on stricter indicators"""
+        
+        # If we know from AniList that it's a movie format, trust it
+        if anime_format == "MOVIE":
+            return True
+        
+        # Check file patterns for movie indicators
+        movie_indicators = [
+            'movie', 'film', 'gekijo', 'gekijou', 'gekijouban', 
+            'theatrical', 'cinema', 'feature'
+        ]
+        
+        for file_info in torrent_info.get('files', []):
+            filename = file_info.get('name', '').lower()
+            
+            # Check for explicit movie keywords
+            if any(indicator in filename for indicator in movie_indicators):
+                return True
+        
+        # Only consider large file sizes if episode count is very low
+        episode_count = torrent_info.get('episode_count', 0)
+        if episode_count <= 1:  # Stricter condition to avoid misclassifying OVAs/specials
+            for file_info in torrent_info.get('files', []):
+                file_size = file_info.get('length', 0)
+                if file_size > 1024**3:  # 1GB
+                    return True
+        
+        return False
+
+    def process_seadex_torrents(self, torrents, season_filter=None, episode_filter=None, anime_format=None):
         """Process Seadex torrent data using groupedUrl to determine release type"""
         processed_torrents = []
         
@@ -29,15 +59,20 @@ class TorrentProcessor:
             
             nyaa_id = int(match.group(1))
             
-            # Determine release type based on groupedUrl
+            # Enhanced release type detection
+            is_movie = self.is_movie_torrent(torrent, anime_format)
+            
             if grouped_url == "" or grouped_url is None:
-                # Empty groupedUrl = Season pack
                 is_season_pack = True
                 logger.debug(f"Torrent {nyaa_id} identified as season pack (empty groupedUrl)")
             else:
-                # Non-empty groupedUrl = Individual episode
                 is_season_pack = False
                 logger.debug(f"Torrent {nyaa_id} identified as individual episode (groupedUrl: {grouped_url})")
+            
+            # Override season pack detection for movies
+            if is_movie:
+                is_season_pack = False
+                logger.debug(f"Torrent {nyaa_id} identified as movie")
             
             # Get basic torrent info
             torrent_info = {
@@ -51,6 +86,8 @@ class TorrentProcessor:
                 'files': torrent.get('files', []),
                 'tracker': torrent.get('tracker', 'Nyaa'),
                 'is_season_pack': is_season_pack,
+                'is_movie': is_movie,
+                'anime_format': anime_format,
                 'episodes': [],
                 'source_anilist_id': torrent.get('source_anilist_id')
             }
@@ -66,22 +103,26 @@ class TorrentProcessor:
                 file_size = file_info.get('length', 0)
                 total_size += file_size
                 
-                # Extract episode info from filename
-                season_num, episode_num = self.episode_utils.extract_episode_info(filename)
-                
-                if episode_num:
+                # For movies, don't try to extract episode info
+                if is_movie:
                     episode_count += 1
-                    episodes_found.add(episode_num)
-                    if season_num:
-                        seasons_found.add(season_num)
+                else:
+                    # Extract episode info from filename
+                    season_num, episode_num = self.episode_utils.extract_episode_info(filename)
                     
-                    # Store episode info
-                    torrent_info['episodes'].append({
-                        'filename': filename,
-                        'season': season_num,
-                        'episode': episode_num,
-                        'size': file_size
-                    })
+                    if episode_num:
+                        episode_count += 1
+                        episodes_found.add(episode_num)
+                        if season_num:
+                            seasons_found.add(season_num)
+                        
+                        # Store episode info
+                        torrent_info['episodes'].append({
+                            'filename': filename,
+                            'season': season_num,
+                            'episode': episode_num,
+                            'size': file_size
+                        })
             
             # Set torrent metadata
             torrent_info['total_size'] = total_size
@@ -90,7 +131,10 @@ class TorrentProcessor:
             torrent_info['episode_numbers'] = list(episodes_found)
             
             # Set season/episode info based on release type
-            if is_season_pack:
+            if is_movie:
+                torrent_info['season'] = None
+                torrent_info['episode'] = None
+            elif is_season_pack:
                 # Season pack - contains multiple episodes
                 torrent_info['season'] = list(seasons_found)[0] if seasons_found else 1
                 torrent_info['episode'] = None  # Season packs don't have a single episode
@@ -99,12 +143,12 @@ class TorrentProcessor:
                 torrent_info['season'] = list(seasons_found)[0] if seasons_found else 1
                 torrent_info['episode'] = list(episodes_found)[0] if episodes_found else None
             
-            # Apply filters if needed (currently commented out in original code)
+            # Apply filters based on release type
             should_include = True
             
             if should_include:
                 processed_torrents.append(torrent_info)
-                release_type = "season pack" if is_season_pack else "individual episode"
+                release_type = "movie" if is_movie else ("season pack" if is_season_pack else "individual episode")
                 logger.debug(f"Including {release_type}: Season {torrent_info['season']}, Episodes: {torrent_info['episode_numbers']}")
         
         return processed_torrents
