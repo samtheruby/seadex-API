@@ -27,6 +27,11 @@ def api():
         query_param = request.args.get('q', '')
         return_type = request.args.get('response', 'xml')
         
+        # Handle empty searches with a default popular anime
+        if not query_param or query_param.strip() == '':
+            query_param = 'given'  # Default to a popular TV anime
+            logger.info("Empty search query, defaulting to 'given'")
+        
         processed_query = query_processor.process_search_query(query_param)
         logger.info(f"Processed search query: '{processed_query}' (original: '{query_param}')")
         
@@ -57,14 +62,26 @@ def api():
             }
             return Response(str(json_response), mimetype='application/json')
         else:
+            # Determine if we should force anime category based on the category filter
+            cat = request.args.get('cat', '')
+            force_anime = False
+            if cat == '5000':  # TV category requested
+                force_anime = True
+            
             xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
-                                                anime_format=anime_format, year=year)
+                                                anime_format=anime_format, year=year,
+                                                force_anime_category=force_anime)
             return Response(xml, mimetype='application/xml')
 
     elif t == 'tvsearch':
         query_param = request.args.get('q', '')
         season = request.args.get('season')
         episode = request.args.get('ep')
+        
+        # Handle empty searches with a default popular anime
+        if not query_param or query_param.strip() == '':
+            query_param = 'One Piece'  # Default to a popular TV anime
+            logger.info("Empty TV search query, defaulting to 'One Piece'")
         
         try:
             season = int(season) if season else None
@@ -90,6 +107,7 @@ def api():
             year = None
         
         if not anilist_id or not processed_torrents:
+            # Return empty but valid RSS instead of error for Prowlarr compatibility
             return Response(xml_service.build_empty_rss("SeadexNab - No Results", 
                                           f"No results found for: {processed_query}"), 
                           mimetype='application/xml')
@@ -102,6 +120,12 @@ def api():
 
     elif t == 'movie':
         query_param = request.args.get('q', '')
+        
+        # Handle empty searches with a default popular movie
+        if not query_param or query_param.strip() == '':
+            query_param = 'Spirited Away'  # Default to a popular anime movie
+            logger.info("Empty movie search query, defaulting to 'Spirited Away'")
+        
         processed_query = query_processor.process_search_query(query_param)
         logger.info(f"Movie search for: '{processed_query}'")
         
