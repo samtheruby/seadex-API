@@ -90,7 +90,7 @@ class XMLService:
                 # Original title building logic for Seadex results
                 title = nyaa_metadata["title"]
                 
-                # Add episode/season info if not already in custom name
+                # Add episode/season info only if not already in the title
                 if not any(marker in title for marker in ['[S', '[Season', '[Episode', '[Movie']):
                     if (torrent_info.get('is_movie') or anime_format == "MOVIE") and year:
                         title += f" ({year}) [Movie]"
@@ -160,5 +160,36 @@ class XMLService:
             ET.SubElement(item, "torznab:attr", name="seeders", value=str(nyaa_metadata["seeders"]))
             ET.SubElement(item, "torznab:attr", name="peers", value=str(nyaa_metadata["seeders"] + nyaa_metadata["leechers"]))
             ET.SubElement(item, "torznab:attr", name="size", value=str(nyaa_metadata["size_bytes"]))
+                        
             ET.SubElement(item, "torznab:attr", name="files", value=str(torrent_info.get('episode_count', 1)))
             ET.SubElement(item, "torznab:attr", name="grabs", value=str(nyaa_metadata["completed"]))
+            
+            # Special handling for movies in attributes
+            if torrent_info.get('is_movie') or anime_format == "MOVIE":
+                ET.SubElement(item, "torznab:attr", name="genre", value="Anime Movie")
+                # Movies need season/episode for compatibility
+                ET.SubElement(item, "torznab:attr", name="season", value="1")
+                ET.SubElement(item, "torznab:attr", name="episode", value="1")
+            else:
+                if torrent_info.get('season'):
+                    ET.SubElement(item, "torznab:attr", name="season", value=str(torrent_info['season']))
+                if torrent_info.get('episode'):
+                    ET.SubElement(item, "torznab:attr", name="episode", value=str(torrent_info['episode']))
+            
+            ET.SubElement(item, "torznab:attr", name="details", value=torrent_info['url'])
+            
+            if torrent_info.get('release_group'):
+                ET.SubElement(item, "torznab:attr", name="group", value=torrent_info['release_group'])
+            
+            # Add source anime ID as additional attribute
+            if torrent_info.get('source_anilist_id'):
+                ET.SubElement(item, "torznab:attr", name="anilist_id", value=str(torrent_info['source_anilist_id']))
+            
+            valid_torrents += 1
+
+        ET.SubElement(channel, "newznab:response", offset="0", total=str(valid_torrents))
+        
+        logger.debug(f"Built RSS with {valid_torrents} valid torrents")
+        xml_str = ET.tostring(rss, encoding='utf-8').decode('utf-8')
+        xml_str = '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
+        return xml_str
