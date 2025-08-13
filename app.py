@@ -15,144 +15,183 @@ search_service = SearchService()
 xml_service = XMLService()
 query_processor = QueryProcessor()
 
-@app.route('/api')
+@app.route('/api', methods=['GET', 'POST'])  # Accept both GET and POST
 def api():
-    t = request.args.get('t', '').lower()
-    logger.debug(f"API request: {request.args}")
+    try:
+        t = request.args.get('t', '').lower()
+        logger.debug(f"API request: {request.args}")
+        logger.debug(f"Request method: {request.method}")
+        logger.debug(f"Request headers: {request.headers}")
 
-    if t == 'caps':
-        return Response(xml_service.build_caps_xml(), mimetype='application/xml')
+        if t == 'caps':
+            response = Response(xml_service.build_caps_xml(), mimetype='application/xml')
+            response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+            return response
 
-    elif t == 'search':
-        query_param = request.args.get('q', '')
-        return_type = request.args.get('response', 'xml')
-        
-        # Handle empty searches with a default popular anime
-        if not query_param or query_param.strip() == '':
-            query_param = 'given'  # Default to a popular TV anime
-            logger.info("Empty search query, defaulting to 'given'")
-        
-        processed_query = query_processor.process_search_query(query_param)
-        logger.info(f"Processed search query: '{processed_query}' (original: '{query_param}')")
-        
-        # Perform search with enhanced movie support
-        result = search_service.perform_search(processed_query)
-        
-        # Handle the 5-tuple return value
-        if len(result) == 5:
-            anilist_id, anime_name, processed_torrents, anime_format, year = result
-        else:
-            anilist_id, anime_name, processed_torrents = result
-            anime_format = None
-            year = None
-        
-        if not anilist_id or not processed_torrents:
-            if return_type == 'json':
-                return Response('{"usenetReleases": [], "torrentReleases": []}', 
-                              mimetype='application/json', status=404)
+        elif t == 'search':
+            query_param = request.args.get('q', '')
+            return_type = request.args.get('response', 'xml')
+            
+            # Handle empty searches with a default popular anime
+            if not query_param or query_param.strip() == '':
+                # For test connections from Prowlarr, return a valid empty RSS
+                logger.info("Empty search query - returning empty but valid RSS for test connection")
+                xml_response = xml_service.build_empty_rss("SeadexNab", "Test connection successful")
+                response = Response(xml_response, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+            
+            processed_query = query_processor.process_search_query(query_param)
+            logger.info(f"Processed search query: '{processed_query}' (original: '{query_param}')")
+            
+            # Perform search with enhanced movie support
+            result = search_service.perform_search(processed_query)
+            
+            # Handle the 5-tuple return value
+            if len(result) == 5:
+                anilist_id, anime_name, processed_torrents, anime_format, year = result
             else:
-                return Response(xml_service.build_empty_rss("SeadexNab - No Results", 
-                                              f"No results found for: {processed_query}"), 
-                              mimetype='application/xml')
-        
-        if return_type == 'json':
-            json_response = {
-                "usenetReleases": [],
-                "torrentReleases": [{"title": t.get("title", ""), "url": t.get("url", "")} for t in processed_torrents]
-            }
-            return Response(str(json_response), mimetype='application/json')
-        else:
-            # Determine if we should force anime category based on the category filter
-            cat = request.args.get('cat', '')
-            force_anime = False
-            if cat == '5000':  # TV category requested
-                force_anime = True
+                anilist_id, anime_name, processed_torrents = result
+                anime_format = None
+                year = None
             
+            if not anilist_id or not processed_torrents:
+                if return_type == 'json':
+                    return Response('{"usenetReleases": [], "torrentReleases": []}', 
+                                  mimetype='application/json', status=200)  # Return 200, not 404
+                else:
+                    xml_response = xml_service.build_empty_rss("SeadexNab - No Results", 
+                                                  f"No results found for: {processed_query}")
+                    response = Response(xml_response, mimetype='application/xml')
+                    response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                    return response
+            
+            if return_type == 'json':
+                json_response = {
+                    "usenetReleases": [],
+                    "torrentReleases": [{"title": t.get("title", ""), "url": t.get("url", "")} for t in processed_torrents]
+                }
+                return Response(str(json_response), mimetype='application/json')
+            else:
+                # Determine if we should force anime category based on the category filter
+                cat = request.args.get('cat', '')
+                force_anime = False
+                if cat == '5000':  # TV category requested
+                    force_anime = True
+                
+                xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
+                                                    anime_format=anime_format, year=year,
+                                                    force_anime_category=force_anime)
+                response = Response(xml, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+
+        elif t == 'tvsearch':
+            query_param = request.args.get('q', '')
+            season = request.args.get('season')
+            episode = request.args.get('ep')
+            
+            # Handle empty searches with a default popular anime
+            if not query_param or query_param.strip() == '':
+                # For test connections, return valid empty RSS
+                logger.info("Empty TV search query - returning empty but valid RSS")
+                xml_response = xml_service.build_empty_rss("SeadexNab", "TV search test successful")
+                response = Response(xml_response, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+            
+            try:
+                season = int(season) if season else None
+            except ValueError:
+                season = None
+                
+            try:
+                episode = int(episode) if episode else None
+            except ValueError:
+                episode = None
+            
+            processed_query = query_processor.process_search_query(query_param, season, episode)
+            logger.info(f"TV search for: '{processed_query}' (season={season}, episode={episode})")
+            
+            result = search_service.perform_search(processed_query, season, episode)
+            
+            # Handle the 5-tuple return value
+            if len(result) == 5:
+                anilist_id, anime_name, processed_torrents, anime_format, year = result
+            else:
+                anilist_id, anime_name, processed_torrents = result
+                anime_format = None
+                year = None
+            
+            if not anilist_id or not processed_torrents:
+                # Return empty but valid RSS instead of error for Prowlarr compatibility
+                xml_response = xml_service.build_empty_rss("SeadexNab - No Results", 
+                                              f"No results found for: {processed_query}")
+                response = Response(xml_response, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+            
+            # Force anime category (5000) for Sonarr compatibility
             xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
-                                                anime_format=anime_format, year=year,
-                                                force_anime_category=force_anime)
-            return Response(xml, mimetype='application/xml')
+                                                season, episode, anime_format, year, 
+                                                force_anime_category=True)
+            response = Response(xml, mimetype='application/xml')
+            response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+            return response
 
-    elif t == 'tvsearch':
-        query_param = request.args.get('q', '')
-        season = request.args.get('season')
-        episode = request.args.get('ep')
-        
-        # Handle empty searches with a default popular anime
-        if not query_param or query_param.strip() == '':
-            query_param = 'One Piece'  # Default to a popular TV anime
-            logger.info("Empty TV search query, defaulting to 'One Piece'")
-        
-        try:
-            season = int(season) if season else None
-        except ValueError:
-            season = None
+        elif t == 'movie':
+            query_param = request.args.get('q', '')
             
-        try:
-            episode = int(episode) if episode else None
-        except ValueError:
-            episode = None
-        
-        processed_query = query_processor.process_search_query(query_param, season, episode)
-        logger.info(f"TV search for: '{processed_query}' (season={season}, episode={episode})")
-        
-        result = search_service.perform_search(processed_query, season, episode)
-        
-        # Handle the 5-tuple return value
-        if len(result) == 5:
-            anilist_id, anime_name, processed_torrents, anime_format, year = result
-        else:
-            anilist_id, anime_name, processed_torrents = result
-            anime_format = None
-            year = None
-        
-        if not anilist_id or not processed_torrents:
-            # Return empty but valid RSS instead of error for Prowlarr compatibility
-            return Response(xml_service.build_empty_rss("SeadexNab - No Results", 
-                                          f"No results found for: {processed_query}"), 
-                          mimetype='application/xml')
-        
-        # Force anime category (5000) for Sonarr compatibility
-        xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
-                                            season, episode, anime_format, year, 
-                                            force_anime_category=True)
-        return Response(xml, mimetype='application/xml')
+            # Handle empty searches
+            if not query_param or query_param.strip() == '':
+                logger.info("Empty movie search query - returning empty but valid RSS")
+                xml_response = xml_service.build_empty_rss("SeadexNab", "Movie search test successful")
+                response = Response(xml_response, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+            
+            processed_query = query_processor.process_search_query(query_param)
+            logger.info(f"Movie search for: '{processed_query}'")
+            
+            result = search_service.perform_search(processed_query, search_type="ANIME")
+            
+            # Handle the 5-tuple return value
+            if len(result) == 5:
+                anilist_id, anime_name, processed_torrents, anime_format, year = result
+            else:
+                anilist_id, anime_name, processed_torrents = result
+                anime_format = None
+                year = None
+            
+            if not anilist_id or not processed_torrents:
+                xml_response = xml_service.build_empty_rss("SeadexNab - No Results", 
+                                              f"No results found for: {processed_query}")
+                response = Response(xml_response, mimetype='application/xml')
+                response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+                return response
+            
+            # Use movie category (2000) for Radarr compatibility
+            xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
+                                                anime_format=anime_format, year=year, 
+                                                force_anime_category=False)
+            response = Response(xml, mimetype='application/xml')
+            response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+            return response
 
-    elif t == 'movie':
-        query_param = request.args.get('q', '')
-        
-        # Handle empty searches with a default popular movie
-        if not query_param or query_param.strip() == '':
-            query_param = 'Spirited Away'  # Default to a popular anime movie
-            logger.info("Empty movie search query, defaulting to 'Spirited Away'")
-        
-        processed_query = query_processor.process_search_query(query_param)
-        logger.info(f"Movie search for: '{processed_query}'")
-        
-        result = search_service.perform_search(processed_query, search_type="ANIME")
-        
-        # Handle the 5-tuple return value
-        if len(result) == 5:
-            anilist_id, anime_name, processed_torrents, anime_format, year = result
         else:
-            anilist_id, anime_name, processed_torrents = result
-            anime_format = None
-            year = None
-        
-        if not anilist_id or not processed_torrents:
-            return Response(xml_service.build_empty_rss("SeadexNab - No Results", 
-                                          f"No results found for: {processed_query}"), 
-                          mimetype='application/xml')
-        
-        # Use movie category (2000) for Radarr compatibility
-        xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
-                                            anime_format=anime_format, year=year, 
-                                            force_anime_category=False)
-        return Response(xml, mimetype='application/xml')
-
-    else:
-        logger.error(f"Invalid request type: {t}")
-        return Response("Invalid request", status=400)
+            # Return valid capabilities XML for any unrecognized request type
+            logger.warning(f"Unknown request type: {t}, returning capabilities")
+            response = Response(xml_service.build_caps_xml(), mimetype='application/xml')
+            response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+            return response
+            
+    except Exception as e:
+        logger.error(f"Error processing request: {e}", exc_info=True)
+        # Always return a valid XML response even on error
+        xml_response = xml_service.build_empty_rss("SeadexNab - Error", f"Error processing request: {str(e)}")
+        response = Response(xml_response, mimetype='application/xml')
+        response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+        return response
 
 @app.route('/test')
 def test():
@@ -202,5 +241,24 @@ def test():
     
     return result_text
 
+@app.errorhandler(400)
+def handle_bad_request(e):
+    """Handle bad requests (like HTTPS to HTTP) gracefully"""
+    logger.error(f"Bad request: {e}")
+    xml_response = xml_service.build_empty_rss("SeadexNab", "Bad request - ensure you're using HTTP not HTTPS")
+    response = Response(xml_response, mimetype='application/xml')
+    response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+    return response
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Global exception handler"""
+    logger.error(f"Unhandled exception: {e}", exc_info=True)
+    xml_response = xml_service.build_empty_rss("SeadexNab - Error", f"Server error: {str(e)}")
+    response = Response(xml_response, mimetype='application/xml')
+    response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+    return response
+
 if __name__ == '__main__':
+    # Use the port from config
     app.run(host='0.0.0.0', port=9009, debug=True)
