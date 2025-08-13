@@ -2,23 +2,121 @@ import json
 import os
 import re
 import logging
+import requests
+import threading
+import time
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 class MappingService:
-    def __init__(self, mapping_file_path='mapping.json'):
+    def __init__(self, mapping_file_path='mapping.json', remote_url=None, update_interval_hours=1):
         self.mapping_file_path = mapping_file_path
+        self.remote_url = remote_url or 'https://raw.githubusercontent.com/samtheruby/seadex-API-Mappings/refs/heads/main/mapping.json'
+        self.update_interval_hours = update_interval_hours
         self.mappings = {}
         self.search_index = {}
         self.settings = {}
-        self.load_mappings()
+        self.last_update = None
+        self.update_thread = None
+        self.stop_updates = False
+        
+        # Load mappings on initialization
+        self.initialize_mappings()
+        
+        # Start background update thread
+        self.start_auto_updates()
+    
+    def initialize_mappings(self):
+        """Initialize mappings - download from remote or use local"""
+        # First, try to download from remote
+        if self.download_remote_mapping():
+            logger.info("Successfully downloaded remote mapping file")
+        elif os.path.exists(self.mapping_file_path):
+            # Fall back to local file if remote download fails
+            logger.info("Using existing local mapping file")
+            self.load_mappings()
+        else:
+            # Create default if nothing exists
+            logger.info("No mapping file found, creating default")
+            self.create_default_mapping_file()
+            self.load_mappings()
+    
+    def download_remote_mapping(self) -> bool:
+        """Download mapping file from remote URL"""
+        try:
+            logger.info(f"Downloading mapping file from: {self.remote_url}")
+            response = requests.get(self.remote_url, timeout=30)
+            response.raise_for_status()
+            
+            # Validate JSON
+            mapping_data = response.json()
+            
+            # Save to local file
+            with open(self.mapping_file_path, 'w', encoding='utf-8') as f:
+                json.dump(mapping_data, f, indent=2, ensure_ascii=False)
+            
+            # Load the new mappings
+            self.mappings = mapping_data.get('mappings', {})
+            self.settings = mapping_data.get('settings', {
+                'fallback_to_seadex': True,
+                'priority': 'mapping_first'
+            })
+            self._build_search_index()
+            
+            self.last_update = datetime.now()
+            logger.info(f"Successfully updated mappings from remote. Found {len(self.mappings)} entries")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download remote mapping file: {e}")
+            return False
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in remote mapping file: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error downloading mapping file: {e}")
+            return False
+    
+    def start_auto_updates(self):
+        """Start background thread for automatic updates"""
+        def update_loop():
+            while not self.stop_updates:
+                # Wait for the update interval
+                time.sleep(self.update_interval_hours * 3600)  # Convert hours to seconds
+                
+                if not self.stop_updates:
+                    logger.info("Running scheduled mapping update")
+                    if self.download_remote_mapping():
+                        logger.info("Scheduled update completed successfully")
+                    else:
+                        logger.warning("Scheduled update failed, will retry next interval")
+        
+        self.update_thread = threading.Thread(target=update_loop, daemon=True)
+        self.update_thread.start()
+        logger.info(f"Started auto-update thread (interval: {self.update_interval_hours} hours)")
+    
+    def stop_auto_updates(self):
+        """Stop the background update thread"""
+        self.stop_updates = True
+        if self.update_thread:
+            self.update_thread.join(timeout=5)
+    
+    def force_update(self) -> bool:
+        """Force an immediate update from remote"""
+        logger.info("Forcing immediate mapping update")
+        return self.download_remote_mapping()
+    
+    def get_last_update_time(self) -> Optional[datetime]:
+        """Get the last successful update time"""
+        return self.last_update
     
     def load_mappings(self):
-        """Load mappings from JSON file"""
+        """Load mappings from local JSON file"""
         if not os.path.exists(self.mapping_file_path):
-            logger.info(f"Mapping file not found at {self.mapping_file_path}, creating default")
-            self.create_default_mapping_file()
+            logger.warning(f"Local mapping file not found at {self.mapping_file_path}")
+            return
         
         try:
             with open(self.mapping_file_path, 'r', encoding='utf-8') as f:
@@ -29,9 +127,9 @@ class MappingService:
                     'priority': 'mapping_first'
                 })
                 self._build_search_index()
-                logger.info(f"Loaded {len(self.mappings)} mapping entries")
+                logger.info(f"Loaded {len(self.mappings)} mapping entries from local file")
         except Exception as e:
-            logger.error(f"Error loading mapping file: {e}")
+            logger.error(f"Error loading local mapping file: {e}")
             self.mappings = {}
             self.settings = {}
             self.search_index = {}
@@ -212,7 +310,9 @@ class MappingService:
             },
             "settings": {
                 "fallback_to_seadex": true,
-                "priority": "mapping_first"
+                "priority": "mapping_first",
+                "remote_url": "https://raw.githubusercontent.com/samtheruby/seadex-API-Mappings/refs/heads/main/mapping.json",
+                "update_interval_hours": 1
             }
         }
         
@@ -227,3 +327,13 @@ class MappingService:
         """Reload mappings from file (useful for hot-reloading)"""
         logger.info("Reloading mappings from file")
         self.load_mappings()
+    
+    def get_stats(self) -> Dict:
+        """Get statistics about the current mappings"""
+        return {
+            'total_mappings': len(self.mappings),
+            'total_search_terms': len(self.search_index),
+            'last_update': self.last_update.isoformat() if self.last_update else None,
+            'remote_url': self.remote_url,
+            'update_interval_hours': self.update_interval_hours
+        }
