@@ -1,4 +1,4 @@
-from flask import Flask, request, Response
+from flask import Flask, request, Response, jsonify
 import logging
 from services.search_service import SearchService
 from services.xml_service import XMLService
@@ -154,6 +154,58 @@ def api():
         logger.error(f"Invalid request type: {t}")
         return Response("Invalid request", status=400)
 
+@app.route('/mapping/update', methods=['POST'])
+def force_mapping_update():
+    """Force an immediate update of the mapping file from remote"""
+    try:
+        success = search_service.mapping_service.force_update()
+        if success:
+            stats = search_service.mapping_service.get_stats()
+            return jsonify({
+                'success': True,
+                'message': 'Mapping file updated successfully',
+                'stats': stats
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to update mapping file from remote'
+            }), 500
+    except Exception as e:
+        logger.error(f"Error forcing mapping update: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@app.route('/mapping/stats')
+def mapping_stats():
+    """Get statistics about the current mapping configuration"""
+    try:
+        stats = search_service.mapping_service.get_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Error getting mapping stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/mapping/reload', methods=['POST'])
+def reload_mapping():
+    """Reload mapping from local file (useful for testing local changes)"""
+    try:
+        search_service.mapping_service.reload_mappings()
+        stats = search_service.mapping_service.get_stats()
+        return jsonify({
+            'success': True,
+            'message': 'Local mapping file reloaded',
+            'stats': stats
+        })
+    except Exception as e:
+        logger.error(f"Error reloading mapping: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
 @app.route('/test')
 def test():
     """Test endpoint to debug the search functionality"""
@@ -187,18 +239,30 @@ def test():
     if not anilist_id:
         return f"Could not find AniList ID for: {q}"
     
-    result_text = f"Found {len(processed_torrents)} torrents for {anime_name} ({anime_format}) (ID: {anilist_id}, Year: {year})<br>"
+    # Get mapping stats
+    mapping_stats = search_service.mapping_service.get_stats()
+    
+    result_text = f"<h3>Mapping Stats:</h3>"
+    result_text += f"Total mappings: {mapping_stats['total_mappings']}<br>"
+    result_text += f"Last update: {mapping_stats['last_update']}<br>"
+    result_text += f"Remote URL: {mapping_stats['remote_url']}<br><br>"
+    
+    result_text += f"<h3>Search Results:</h3>"
+    result_text += f"Found {len(processed_torrents)} torrents for {anime_name} ({anime_format}) (ID: {anilist_id}, Year: {year})<br>"
     result_text += f"Processed query: {processed_query}<br><br>"
     
     for i, torrent in enumerate(processed_torrents):
         result_text += f"Torrent {i+1}:<br>"
+        if torrent.get('custom_name'):
+            result_text += f"  - <b>Custom Name: {torrent['custom_name']}</b><br>"
         result_text += f"  - Movie: {torrent.get('is_movie', False)}<br>"
         result_text += f"  - Season Pack: {torrent['is_season_pack']}<br>"
         result_text += f"  - Seasons: {torrent['seasons']}<br>"
         result_text += f"  - Episodes: {torrent['episode_numbers']}<br>"
         result_text += f"  - Release Group: {torrent['release_group']}<br>"
         result_text += f"  - Size: {torrent['total_size'] / (1024**3):.2f} GB<br>"
-        result_text += f"  - Files: {torrent['episode_count']}<br><br>"
+        result_text += f"  - Files: {torrent['episode_count']}<br>"
+        result_text += f"  - Is Custom: {torrent.get('is_custom_mapping', False)}<br><br>"
     
     return result_text
 
