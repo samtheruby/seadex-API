@@ -33,7 +33,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
+        # Only login if we're going to push (not on PRs, and only on main branch or tags)
+        if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -46,14 +47,22 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            # Branch-based tags (only for main/master)
+            type=ref,event=branch,enable={{is_default_branch}}
+            # PR tags (for testing)
             type=ref,event=pr
+            # Version tags (from git tags)
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            # Pre-release tags
             type=semver,pattern={{version}},suffix=-alpha,enable={{is_prerelease}}
             type=semver,pattern={{version}},suffix=-beta,enable={{is_prerelease}}
+            # Latest tag (only for main branch stable releases)
             type=raw,value=latest,enable={{is_default_branch}}
+            # Development tag (for main branch)
+            type=raw,value=dev,enable={{is_default_branch}}
+            # Alpha/Beta convenience tags
             type=raw,value=alpha,enable={{is_prerelease}}
             type=raw,value=beta,enable={{is_prerelease}}
 
@@ -63,7 +72,11 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          # Smart push logic: 
+          # - Always build (for testing)
+          # - Only push to registry for: main/master branches OR version tags
+          # - Never push for PRs (just build to test)
+          push: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -71,8 +84,23 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: github.event_name != 'pull_request'
+        # Only create attestation if we actually pushed the image
+        if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag')
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+      - name: Output image tags
+        run: |
+          echo "🐳 Built Docker image with the following tags:"
+          echo "${{ steps.meta.outputs.tags }}"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "📝 This is a PR build - image was built but not pushed to registry"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "🏷️ This is a tagged release - image pushed to registry"
+          elif [[ "${{ github.ref_name }}" == "main" || "${{ github.ref_name }}" == "master" ]]; then
+            echo "🚀 This is a main branch build - image pushed to registry"
+          else
+            echo "🔧 This is a feature branch - image was built but not pushed to registry"
+          fi
