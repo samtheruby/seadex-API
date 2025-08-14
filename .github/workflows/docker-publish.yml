@@ -1,6 +1,5 @@
 name: Build and Push Docker Image
 
-# Add dynamic run name based on trigger type
 run-name: |
   ${{
     github.ref_type == 'tag' && format('seadex-API Release {0}', github.ref_name) ||
@@ -41,7 +40,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        # Only login if we're going to push (not on PRs, and only on main branch or tags)
         if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag')
         uses: docker/login-action@v3
         with:
@@ -55,17 +53,30 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            # Branch-based tags (only for main/master)
+            type=ref,event=branch,enable=${{ github.ref_name == 'main' || github.ref_name == 'master' }}
+
+            # PR tags (for testing)
             type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=semver,pattern={{version}},suffix=-alpha,enable={{is_prerelease}}
-            type=semver,pattern={{version}},suffix=-beta,enable={{is_prerelease}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=dev,enable={{is_default_branch}}
-            type=raw,value=alpha,enable={{is_prerelease}}
-            type=raw,value=beta,enable={{is_prerelease}}
+
+            # Version tags (from git tags)
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+            # Pre-release tags
+            type=semver,pattern={{version}},suffix=-alpha,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-alpha') }}
+            type=semver,pattern={{version}},suffix=-beta,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-beta') }}
+
+            # Latest tag (only for main branch stable releases)
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+
+            # Development tag (for main branch)
+            type=raw,value=dev,enable=${{ github.ref_name == 'main' }}
+
+            # Alpha/Beta convenience tags
+            type=raw,value=alpha,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-alpha') }}
+            type=raw,value=beta,enable=${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-beta') }}
 
       - name: Build and push Docker image
         id: build
@@ -73,10 +84,6 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          # Smart push logic: 
-          # - Always build (for testing)
-          # - Only push to registry for: main/master branches OR version tags
-          # - Never push for PRs (just build to test)
           push: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -85,7 +92,6 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        # Only create attestation if we actually pushed the image
         if: github.event_name != 'pull_request' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_type == 'tag')
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
