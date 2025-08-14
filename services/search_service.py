@@ -69,6 +69,11 @@ class SearchService:
             # Apply season/episode filters to custom torrents
             filtered_torrents = self._filter_torrents(custom_torrents, season, episode)
             
+            # If we have movie format, ensure movie torrents are properly marked
+            if anime_format == 'MOVIE':
+                for torrent in filtered_torrents:
+                    torrent['is_movie'] = True
+            
             logger.info(f"Found {len(filtered_torrents)} torrents after mapping and filtering")
             return main_anilist_id, anime_name, filtered_torrents, anime_format, year
         
