@@ -26,17 +26,28 @@ def api():
     elif t == 'search':
         query_param = request.args.get('q', '')
         return_type = request.args.get('response', 'xml')
+        cat = request.args.get('cat', '')
         
-        # Handle empty searches with a default popular anime
+        # Handle empty searches based on category
         if not query_param or query_param.strip() == '':
-            query_param = 'One Piece'  # Default to a popular TV anime
-            logger.info("Empty search query, defaulting to 'One Piece'")
+            if cat == '2000':  # Movie category
+                query_param = 'Akira'  # Default to a popular anime movie
+                logger.info("Empty movie category search, defaulting to 'Akira'")
+            else:  # TV or general
+                query_param = 'given'  # Default to a popular TV anime
+                logger.info("Empty search query, defaulting to 'given'")
         
         processed_query = query_processor.process_search_query(query_param)
-        logger.info(f"Processed search query: '{processed_query}' (original: '{query_param}')")
+        logger.info(f"Processed search query: '{processed_query}' (original: '{query_param}', cat: {cat})")
         
         # Perform search with enhanced movie support
-        result = search_service.perform_search(processed_query)
+        # Use search_type based on category if specified
+        search_type = "ANIME"
+        if cat == '2000':
+            # Hint that we're looking for movies
+            search_type = "ANIME"  # Still use ANIME but the category will influence results
+        
+        result = search_service.perform_search(processed_query, search_type=search_type)
         
         # Handle the 5-tuple return value
         if len(result) == 5:
@@ -63,10 +74,14 @@ def api():
             return Response(str(json_response), mimetype='application/json')
         else:
             # Determine if we should force anime category based on the category filter
-            cat = request.args.get('cat', '')
             force_anime = False
             if cat == '5000':  # TV category requested
                 force_anime = True
+            elif cat == '2000':  # Movie category requested
+                force_anime = False
+            else:
+                # No specific category, use format to decide
+                force_anime = anime_format != 'MOVIE'
             
             xml = xml_service.build_rss_enhanced(anilist_id, anime_name, processed_torrents, 
                                                 anime_format=anime_format, year=year,
@@ -80,8 +95,8 @@ def api():
         
         # Handle empty searches with a default popular anime
         if not query_param or query_param.strip() == '':
-            query_param = 'One Piece'  # Default to a popular TV anime
-            logger.info("Empty TV search query, defaulting to 'One Piece'")
+            query_param = 'given'  # Default to a popular TV anime
+            logger.info("Empty TV search query, defaulting to 'given'")
         
         try:
             season = int(season) if season else None
