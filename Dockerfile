@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-# Update system and install system packages including bash
+# Update system and install packages
 RUN apk update && \
     apk upgrade && \
     apk add --no-cache \
@@ -8,7 +8,8 @@ RUN apk update && \
     nano \
     curl \
     wget \
-    jq
+    jq \
+    shadow  # needed for usermod/groupmod
 
 # Set working directory
 WORKDIR /app
@@ -16,16 +17,15 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Update pip, setuptools, and install requirements in one layer
+# Upgrade pip and install requirements
 RUN pip install --upgrade pip setuptools && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create a non-root user for running the application with common UID/GID
-# Use existing group with GID 100 if it exists, or create our own
-# Also check if UID 99 exists and handle appropriately
+# Create non-root user/group with UID=99 and GID=100 if not already present
+# Resolve the username at build time so USER can be set literally
 RUN EXISTING_GROUP=$(getent group 100 | cut -d: -f1) && \
     if [ -n "$EXISTING_GROUP" ]; then \
         echo "Using existing group: $EXISTING_GROUP (GID 100)"; \
@@ -44,27 +44,23 @@ RUN EXISTING_GROUP=$(getent group 100 | cut -d: -f1) && \
         adduser -u 99 -S appuser -G "$GROUP_NAME" -s /bin/bash; \
         USER_NAME="appuser"; \
     fi && \
-    echo "Application will run as user: $USER_NAME (UID 99) in group: $GROUP_NAME (GID 100)"
-
-# Change ownership of the app directory to the user we're using
-RUN USER_NAME=$(getent passwd 99 | cut -d: -f1) && \
-    GROUP_NAME=$(getent group 100 | cut -d: -f1) && \
+    echo "$USER_NAME" > /tmp/appuser && \
     chown -R "$USER_NAME:$GROUP_NAME" /app
 
-# Set bash as default shell and keep root as login user
+# Set bash as default shell
 SHELL ["/bin/bash", "-c"]
 
-# Switch to the user with UID 99 for running the application
-RUN USER_NAME=$(getent passwd 99 | cut -d: -f1) && echo "USER $USER_NAME" > /tmp/user_directive
-RUN cat /tmp/user_directive
-USER $(getent passwd 99 | cut -d: -f1)
+# Read username from /tmp/appuser and set USER instruction literally
+ARG APPUSER
+RUN APPUSER=$(cat /tmp/appuser) && echo "Using USER=$APPUSER" && echo "$APPUSER" > /tmp/finaluser
+USER $(cat /tmp/finaluser)
 
-# Expose the port the app runs on
+# Expose port
 EXPOSE 9009
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:9009/api?t=caps || exit 1
 
-# Command to run the application
+# Run app
 CMD ["python", "app.py"]
