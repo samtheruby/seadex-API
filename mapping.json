@@ -1,0 +1,69 @@
+{
+  "mappings": {
+    "attack on titan": {
+      "anilist_id": 16498,
+      "anime_name": "Attack on Titan",
+      "anime_format": "TV",
+      "also_search": [
+        "shingeki no kyojin",
+        "attack on titan season 1",
+        "attack on titan s1",
+        "attack on titan s01"
+      ],
+      "torrents": [
+        {
+          "nyaa_id": 1840030,
+          "name": "Attack.on.Titan.2013.AKA.Shingeki.no.Kyojin.S01.1080p.BluRay.SEADEX-BEST.Dual-Audio.OPUS.x265-ZeroBuild"
+        },
+        {
+          "nyaa_id": 1838911,
+          "name": "Attack.on.Titan.2013.AKA.Shingeki.no.Kyojin.S01.1080p.BluRay.SEADEX-ALT.OPUS.x265-MTBB"
+        }
+      ]
+    },
+    "given": {
+      "anilist_id": 108430,
+      "anime_name": "Given",
+      "anime_format": "TV",
+      "also_search": [
+        "Given",
+        "given",
+        "ギヴン",
+        "Given S01",
+        "Given S1"
+      ],
+      "torrents": [
+        {
+          "nyaa_id": 1833527,
+          "name": "Given.2019.S01.1080p.BluRay.SEADEX-BEST.Dual-Audio.OPUS.x265-smol"
+        }
+      ]
+    },
+    "akira": {
+      "anilist_id": 47,
+      "anime_name": "AKIRA",
+      "anime_format": "MOVIE",
+      "year": 1988,
+      "also_search": [
+        "Akira",
+        "AKIRA",
+        "アキラ",
+        "Akira 1988"
+      ],
+      "torrents": [
+        {
+          "nyaa_id": 1548873,
+          "name": "Akira.1988.REPACK.1080p.BluRay.SEADEX-BEST.Dual-Audio.FLAC.x264-hydes"
+        },
+        {
+          "nyaa_id": 1828382,
+          "name": "Akira.1988.REPACK.1080p.BluRay.REMUX.COMMUNITY-ALT.AVC.Dual-Audio.FLAC-hydes"
+        }
+      ]
+    }
+  },
+  "settings": {
+    "fallback_to_seadex": true,
+    "priority": "mapping_first"
+  }
+}

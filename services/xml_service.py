@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import logging
+import re
 from datetime import datetime
 from services.nyaa_service import NyaaService
 
@@ -87,26 +88,23 @@ class XMLService:
             if torrent_info.get('custom_name'):
                 title = torrent_info['custom_name']
             else:
-                # Original title building logic for Seadex results
+                # Keep original Nyaa title but ensure compatibility with Sonarr/Radarr
                 title = nyaa_metadata["title"]
                 
-                # Add episode/season info only if not already in the title
-                if not any(marker in title for marker in ['[S', '[Season', '[Episode', '[Movie']):
-                    if (torrent_info.get('is_movie') or anime_format == "MOVIE") and year:
-                        title += f" ({year}) [Movie]"
-                    elif torrent_info.get('is_movie') or anime_format == "MOVIE":
-                        title += " [Movie]"
-                    elif torrent_info.get('is_season_pack'):
+                # Add minimal required tags if they're not already present
+                # This is needed for Sonarr/Radarr to properly identify releases
+                if not any(marker in title for marker in ['[E', '[S', '[Season', '[Episode']):
+                    if torrent_info.get('is_season_pack'):
+                        season_num = torrent_info.get('season', 1)
                         if torrent_info.get('episode_numbers'):
-                            episodes_str = f"Episodes {min(torrent_info['episode_numbers'])}-{max(torrent_info['episode_numbers'])}"
-                            title += f" [{episodes_str}]"
-                        else:
-                            title += f" [Season {torrent_info.get('season', 1)}]"
-                    else:
-                        if torrent_info.get('episode'):
+                            # Only append episode info if it's not already in the title
+                            if not re.search(r'E\d+|Episode\s+\d+', title, re.IGNORECASE):
+                                episodes_str = f"E{min(torrent_info['episode_numbers'])}-{max(torrent_info['episode_numbers'])}"
+                                title += f" [S{season_num:02d}{episodes_str}]"
+                    elif torrent_info.get('episode'):
+                        # Only append episode info if it's not already in the title
+                        if not re.search(r'E\d+|Episode\s+\d+', title, re.IGNORECASE):
                             title += f" [S{torrent_info.get('season', 1):02d}E{torrent_info['episode']:02d}]"
-                        elif torrent_info.get('season'):
-                            title += f" [Season {torrent_info['season']}]"
 
             item = ET.SubElement(channel, "item")
             ET.SubElement(item, "title").text = title
