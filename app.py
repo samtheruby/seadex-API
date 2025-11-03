@@ -282,4 +282,4 @@ def test():
     return result_text
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=9009, debug=True)
+    app.run(host='0.0.0.0', port=18621, debug=True)

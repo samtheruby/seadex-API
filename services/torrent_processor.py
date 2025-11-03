@@ -14,28 +14,34 @@ class TorrentProcessor:
         # If we know from AniList that it's a movie format, trust it
         if anime_format == "MOVIE":
             return True
+            
+        # First check for season/episode indicators which would indicate it's NOT a movie
+        season_episode_indicators = [
+            r'S\d+', r'Season \d+',  # Season indicators
+            r'E\d+', r'Episode \d+',  # Episode indicators
+            r'Complete Series',
+            r'Season Pack'
+        ]
         
-        # Check file patterns for movie indicators
+        for file_info in torrent_info.get('files', []):
+            filename = file_info.get('name', '').lower()
+            # If any file has season/episode markers, it's not a movie
+            if any(re.search(pattern, filename, re.IGNORECASE) for pattern in season_episode_indicators):
+                return False
+        
+        # Check file patterns for explicit movie indicators
         movie_indicators = [
-            'movie', 'film', 'gekijo', 'gekijou', 'gekijouban', 
+            'movie', 'film', 'gekijo', 'gekijou', 'gekijouban',
             'theatrical', 'cinema', 'feature'
         ]
         
         for file_info in torrent_info.get('files', []):
             filename = file_info.get('name', '').lower()
-            
             # Check for explicit movie keywords
             if any(indicator in filename for indicator in movie_indicators):
                 return True
         
-        # Only consider large file sizes if episode count is very low
-        episode_count = torrent_info.get('episode_count', 0)
-        if episode_count <= 1:  # Stricter condition to avoid misclassifying OVAs/specials
-            for file_info in torrent_info.get('files', []):
-                file_size = file_info.get('length', 0)
-                if file_size > 1024**3:  # 1GB
-                    return True
-        
+        # Don't use file size as an indicator anymore as it's unreliable
         return False
 
     def process_seadex_torrents(self, torrents, season_filter=None, episode_filter=None, anime_format=None):
